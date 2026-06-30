@@ -5,7 +5,14 @@ from .hit import Hit
 
 
 class Shape:
-    pass
+    def intersect(self, ray):
+        raise NotImplementedError
+
+    def centroid(self):
+        raise NotImplementedError
+
+    def bounding_box(self):
+        raise NotImplementedError
 
 class Sphere(Shape):
     def __init__(self, center=[0, 0, 0], radius=1.0, material=None):
@@ -18,18 +25,18 @@ class Sphere(Shape):
         oc = ray.origin - self.center
 
         a = np.dot(ray.direction, ray.direction)
-        b = 2.0 * np.dot(oc, ray.direction)
+        half_b = np.dot(oc, ray.direction)
         c = np.dot(oc, oc) - self.radius**2
 
-        discriminant = b**2 - 4*a*c
+        discriminant = half_b * half_b - a * c
 
         if discriminant < 0:
             return None
 
         sqrt_d = np.sqrt(discriminant)
 
-        t0 = (-b - sqrt_d) / (2.0 * a)
-        t1 = (-b + sqrt_d) / (2.0 * a)
+        t0 = (-half_b - sqrt_d) / a
+        t1 = (-half_b + sqrt_d) / a
 
         t = None
 
@@ -56,6 +63,19 @@ class Sphere(Shape):
 
         return hit
 
+    def centroid(self):
+        return self.center.copy()
+
+    def bounding_box(self):
+        r = np.array(
+            [self.radius, self.radius, self.radius],
+            dtype=float
+        )
+        return (
+            self.center - r,
+            self.center + r
+        )
+
 class Plane(Shape):
     def __init__(self, normal=[0, 1, 0], material=None):
         self.normal = self.normalize(np.array(normal))
@@ -81,6 +101,16 @@ class Plane(Shape):
     def normalize(self, v):
         return v / np.linalg.norm(v)
 
+    def centroid(self):
+        return np.zeros(3)
+
+    def bounding_box(self):
+        inf = 1e5
+        return (
+            np.array([-inf, -1e-4, -inf]),
+            np.array([ inf,  1e-4,  inf])
+        )
+
 class Box(Shape):
     def __init__(self,
                 min_corner=[-1, -1, -1],
@@ -100,8 +130,11 @@ class Box(Shape):
                 if ray.origin[i] < self.min_corner[i] or ray.origin[i] > self.max_corner[i]:
                     return None
             else:
-                t1 = (self.min_corner[i] - ray.origin[i]) / ray.direction[i]
-                t2 = (self.max_corner[i] - ray.origin[i]) / ray.direction[i]
+                inv_dir = 1.0 / ray.direction[i]
+                t1 = (self.min_corner[i] - ray.origin[i]) * inv_dir
+                t2 = (self.max_corner[i] - ray.origin[i]) * inv_dir
+                if inv_dir < 0:
+                    t1, t2 = t2, t1
                 near = min(t1, t2)
                 far = max(t1, t2)
 
@@ -146,3 +179,15 @@ class Box(Shape):
         hit.set_face_normal(ray.direction)
 
         return hit
+
+    def centroid(self):
+        return (
+            self.min_corner +
+            self.max_corner
+        ) * 0.5
+
+    def bounding_box(self):
+        return (
+            self.min_corner.copy(),
+            self.max_corner.copy()
+        )

@@ -20,8 +20,7 @@ class DiffuseMaterial(Material):
         return self.albedo
     
     def sample_direction(self, hit_normal):
-        u1 = np.random.random()
-        u2 = np.random.random()
+        u1, u2 = np.random.random(2)
         
         theta = np.arccos(np.sqrt(u1))
         phi = 2 * np.pi * u2
@@ -32,7 +31,8 @@ class DiffuseMaterial(Material):
             tangent = np.array([0.0, 1.0, 0.0])
         
         tangent = tangent - np.dot(tangent, hit_normal) * hit_normal
-        tangent = tangent / np.linalg.norm(tangent)
+        inv = 1.0 / np.sqrt(np.dot(tangent, tangent))
+        tangent *= inv
         bitangent = np.cross(hit_normal, tangent)
         
         x = np.sin(theta) * np.cos(phi)
@@ -49,43 +49,50 @@ class DiffuseMaterial(Material):
     def eval(self, scene, hit, eye, depth=0):
         p = hit.pos
         n = hit.normal
-        
-        if depth < 4:
-            direction, pdf = self.sample_direction(n)
-            
-            bounce_ray = Ray(p + 1e-5 * direction, direction)
-            
-            incoming = scene.trace_ray(bounce_ray, depth + 1)
-            
-            cos_theta = max(0, np.dot(n, direction))
-            color = self.albedo * incoming * cos_theta / pdf
-            
-            return color
-        else:
-            color = np.array([0.0, 0.0, 0.0])
-            
-            for light in scene.lights:
-                light_sample, light_normal = light.get_sample()
-                light_dir = light_sample - p
-                light_dist = np.linalg.norm(light_dir)
-                light_dir = light_dir / light_dist
-                
-                shadow_ray = Ray(p + 1e-5 * light_dir, light_dir)
-                shadow_hit = scene.compute_intersection(shadow_ray)
-                
-                if shadow_hit is None or shadow_hit.t >= light_dist * 0.999:
-                    cos_light = max(0, -np.dot(light_dir, light_normal))
-                    cos_surface = max(0, np.dot(n, light_dir))
-                    
-                    if cos_light > 0 and cos_surface > 0:
-                        area = light.get_area()
-                        Li = light.power * cos_light * area / (light_dist ** 2)
-                        color += self.albedo * Li * cos_surface / np.pi
-            
-            return color
+        L = np.zeros(3)
+        brdf = self.albedo / np.pi
+
+        for light in scene.lights:
+            Li, wi = light.sample_radiance(scene, p)
+            if np.allclose(Li, 0.0):
+                continue
+            cos_theta = max(0.0, np.dot(n, wi))
+            if cos_theta <= 0.0:
+                continue
+            L += brdf * Li * cos_theta
+
+        rr_weight = self.russian_roulette(scene, depth)
+        if rr_weight == 0.0:
+            return L
+
+        direction, pdf = self.sample_direction(n)
+        if pdf <= 0.0:
+            return L
+
+        bounce_ray = Ray(
+            p + scene.epsilon * direction,
+            direction
+        )
+
+        incoming = scene.trace_ray(
+            bounce_ray,
+            depth + 1
+        )
+
+        cos_theta = max(0.0, np.dot(n, direction))
+        L += incoming * brdf * cos_theta * rr_weight / pdf
+        return L
     
     def normalize(self, v):
         return v / np.linalg.norm(v)
+
+    def russian_roulette(self, scene, depth):
+        if depth < scene.min_depth:
+            return 1.0
+        p = scene.rr_probability
+        if np.random.random() > p:
+            return 0.0
+        return 1.0 / p
 
 
 class PhongMaterial(Material):

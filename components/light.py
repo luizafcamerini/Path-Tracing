@@ -1,5 +1,6 @@
 import numpy as np
 from .ray import Ray
+from .hit import Hit
 
 class Light():
     def __init__(self, power: int):
@@ -14,7 +15,7 @@ class PointLight(Light):
     def radiance(self, scene, p):
         l = self.pos - p
         l = l / np.linalg.norm(l)
-        shadow_ray = Ray(p + 1e-5 * l, l)
+        shadow_ray = Ray(p + 1e-3 * l, l)
         hit = scene.compute_intersection(shadow_ray)
         if hit is not None:
             return np.array([0, 0, 0]), np.array([0, 0, 0])
@@ -30,6 +31,14 @@ class PointLight(Light):
 
 
 class AreaLight(Light):
+    @property
+    def emission(self):
+        return np.array([
+            self.power,
+            self.power,
+            self.power
+        ])
+    
     def __init__(self, position, normal, width, height, power, samples=16):
         super().__init__(power)
         self.position = np.array(position)
@@ -68,14 +77,73 @@ class AreaLight(Light):
     
     def sample_radiance(self, scene, p):
         s, n_s = self.get_sample(p)
-        l = s - p
-        l_norm = np.linalg.norm(l)
-        l = l / l_norm
-        shadow_ray = Ray(p + 1e-5 * l, l)
+        wi = s - p
+        dist = np.linalg.norm(wi)
+        if dist < 1e-6:
+            return np.zeros(3), np.zeros(3)
+        wi /= dist
+        shadow_ray = Ray(
+            p + scene.epsilon * wi,
+            wi
+        )
         hit = scene.compute_intersection(shadow_ray)
-        if hit is not None:
-            return np.array([0, 0, 0]), np.array([0, 0, 0])
-        cos_theta = max(0, np.dot(-l, n_s))
+        if hit is not None and hit.t < dist - scene.epsilon:
+            return np.zeros(3), np.zeros(3)
+        cos_light = max(0.0, np.dot(-wi, n_s))
+        if cos_light <= 0.0:
+            return np.zeros(3), np.zeros(3)
         area = self.get_area()
-        Li = self.power * cos_theta * area / (self.samples * l_norm**2)
-        return np.array([Li, Li, Li]), l
+        Li = (
+            self.power
+            * area
+            * cos_light
+            / (dist * dist * self.samples)
+        )
+        return np.array([Li, Li, Li]), wi
+
+    def centroid(self):
+        return self.position.copy()
+
+    def bounding_box(self):
+        corners = []
+        for du in (-0.5, 0.5):
+            for dv in (-0.5, 0.5):
+                p = (
+                    self.position
+                    + du*self.width*self.u
+                    + dv*self.height*self.v
+                )
+                corners.append(p)
+        corners = np.array(corners)
+        eps = 1e-4
+        return (
+            corners.min(axis=0)-eps,
+            corners.max(axis=0)+eps
+        )
+
+    def intersect(self, ray):
+        denom = np.dot(ray.direction, self.normal)
+        if abs(denom) < 1e-6:
+            return None
+        t = np.dot(
+            self.position-ray.origin,
+            self.normal
+        ) / denom
+        if t < 1e-3:
+            return None
+        p = ray.at(t)
+        local = p-self.position
+        u = np.dot(local,self.u)
+        v = np.dot(local,self.v)
+        if abs(u)>self.width*0.5:
+            return None
+        if abs(v)>self.height*0.5:
+            return None
+        hit = Hit(
+            t=t,
+            pos=p,
+            normal=self.normal,
+            material=self
+        )
+        hit.set_face_normal(ray.direction)
+        return hit

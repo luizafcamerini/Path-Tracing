@@ -1,14 +1,19 @@
 import numpy as np
 from components.camera import Camera
-from components.material import DiffuseMaterial, PhongMaterial
+from components.material import DiffuseMaterial
 from components.scene import Scene
 from components.shapes import Sphere, Plane, Box
-from components.light import PointLight, AreaLight
+from components.light import AreaLight
 from components.film import Film
 from components.transform import Transform
 from components.instance import Instance
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 
 scene = Scene()
+scene.max_depth = 6
+scene.min_depth = 3
+scene.rr_probability = 0.7
 
 # =========================
 # MATERIAIS
@@ -84,7 +89,7 @@ floor = Instance(
         normal=[0, 1, 0],
         material=gray_material
     ),
-    gray_material,
+    material=gray_material,
     transform=Transform(
         translation=[0, 0, 0]
     )
@@ -99,7 +104,7 @@ back_plane = Instance(
         normal=[0, 0, 1],
         material=green_material
     ),
-    green_material,
+    material=green_material,
     transform=Transform(
         translation=[0, 2, -5]
     )
@@ -112,9 +117,9 @@ scene.add_object(back_plane)
 left_plane = Instance(
     Plane(
         normal=[1, 0, 0],
-        material=DiffuseMaterial(albedo=[0.5, 0.1, 0.1])
+        material=blue_material
     ),
-    DiffuseMaterial(albedo=[0.5, 0.1, 0.1]),
+    material=blue_material,
     transform=Transform(
         translation=[-3, 2, -3]
     )
@@ -127,9 +132,9 @@ scene.add_object(left_plane)
 right_plane = Instance(
     Plane(
         normal=[-1, 0, 0],
-        material=DiffuseMaterial(albedo=[0.1, 0.1, 0.5])
+        material=red_material
     ),
-    DiffuseMaterial(albedo=[0.1, 0.1, 0.5]),
+    material=red_material,
     transform=Transform(
         translation=[3, 2, -3]
     )
@@ -145,7 +150,7 @@ main_light = AreaLight(
     width=2.0,
     height=2.0,
     power=60,
-    samples=1
+    samples=16
 )
 scene.add_light(main_light)
 
@@ -155,9 +160,14 @@ fill_light = AreaLight(
     width=1.0,
     height=1.0,
     power=25,
-    samples=1
+    samples=16
 )
 scene.add_light(fill_light)
+
+# =========================
+# CONSTROI BVH
+# =========================
+scene.build_bvh()
 
 # =========================
 # CAMERA
@@ -174,9 +184,9 @@ camera = Camera(
 # FILME
 # =========================
 film = Film(
-    width=400,
-    height=400,
-    samples=256
+    width=300,
+    height=300,
+    samples=64
 )
 
 print("=" * 60)
@@ -191,34 +201,46 @@ print("=" * 60)
 # =========================
 # RENDERING
 # =========================
-for j in range(film.height):
-    print(f"Rendering line {j+1}/{film.height} ({100*(j+1)/film.height:.1f}%)")
+def render_row(j):
+    row = np.zeros((film.width, 3), dtype=np.float32)
     for i in range(film.width):
-        color = np.array([0.0, 0.0, 0.0])
-        
-        for sample_idx in range(film.sample_count()):
+        color = np.zeros(3)
+        for _ in range(film.sample_count()):
             x, y = film.get_sample(i, j)
             ray = camera.generate_ray(x, y)
-            
-            sample_color = scene.trace_ray(ray, depth=0)
-            color += sample_color
-        
+            color += scene.trace_ray(ray)
+
         color /= film.sample_count()
-        
-        # Tone mapping com exposure control
-        exposure = 1.0  # Ajuste: < 1.0 para escurecer, > 1.0 para clarear
-        color = color * exposure
-        
-        # Clipping e gamma correction
-        color = np.power(np.clip(color, 0, 1), 1.0 / 2.2)
-        
-        film.set_pixel(i, j, color)
+        color *= 1.25
+        color = np.maximum(color, 0.0)
+        color = np.power(color, 1.0 / 2.2)
+        color = np.clip(color, 0.0, 1.0)
+        row[i] = color
 
-print("=" * 60)
-print("Renderização concluída! Salvando imagem...")
-print("=" * 60)
+    return j, row
 
-film.save("render_pathtracing.png")
+if __name__ == "__main__":
+    workers = max(1, mp.cpu_count() - 1)
 
-print("Imagem salva como: render_pathtracing.png")
-print("=" * 60)
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        for count, (j, row) in enumerate(
+            executor.map(render_row, range(film.height)), 1
+        ):
+
+            if count % 10 == 0 or count == film.height:
+                print(
+                    f"Rendering line {count}/{film.height} "
+                    f"({100*count/film.height:.1f}%)"
+                )
+
+            for i in range(film.width):
+                film.set_pixel(i, j, row[i])
+
+    print("=" * 60)
+    print("Renderização concluída! Salvando imagem...")
+    print("=" * 60)
+
+    film.save("render_pathtracing.png")
+
+    print("Imagem salva como: render_pathtracing.png")
+    print("=" * 60)
