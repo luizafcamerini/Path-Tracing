@@ -11,9 +11,9 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 
 scene = Scene()
-scene.max_depth = 6
-scene.min_depth = 3
-scene.rr_probability = 0.7
+scene.max_depth = 10
+scene.min_depth = 5
+scene.rr_probability = 0.95
 
 # =========================
 # MATERIAIS
@@ -112,34 +112,36 @@ back_plane = Instance(
 scene.add_object(back_plane)
 
 # =========================
-# PLANO LATERAL ESQUERDO
+# PAREDE ESQUERDA
 # =========================
-left_plane = Instance(
-    Plane(
-        normal=[1, 0, 0],
+left_wall = Instance(
+    Box(
+        min_corner=[-0.01, 0.0, -6.0],
+        max_corner=[ 0.01, 4.0,  0.0],
         material=blue_material
     ),
     material=blue_material,
     transform=Transform(
-        translation=[-3, 2, -3]
+        translation=[-3.0, 0.0, 0.0]
     )
 )
-scene.add_object(left_plane)
+scene.add_object(left_wall)
 
 # =========================
-# PLANO LATERAL DIREITO
+# PAREDE DIREITA
 # =========================
-right_plane = Instance(
-    Plane(
-        normal=[-1, 0, 0],
+right_wall = Instance(
+    Box(
+        min_corner=[-0.01, 0.0, -6.0],
+        max_corner=[ 0.01, 4.0,  0.0],
         material=red_material
     ),
     material=red_material,
     transform=Transform(
-        translation=[3, 2, -3]
+        translation=[3.0, 0.0, 0.0]
     )
 )
-scene.add_object(right_plane)
+scene.add_object(right_wall)
 
 # =========================
 # LUZES RETANGULARES
@@ -149,8 +151,8 @@ main_light = AreaLight(
     normal=[0, -1, 0],
     width=2.0,
     height=2.0,
-    power=60,
-    samples=16
+    power=200,
+    samples=64
 )
 scene.add_light(main_light)
 
@@ -159,8 +161,8 @@ fill_light = AreaLight(
     normal=[0, -1, 0],
     width=1.0,
     height=1.0,
-    power=25,
-    samples=16
+    power=80,
+    samples=64
 )
 scene.add_light(fill_light)
 
@@ -186,7 +188,7 @@ camera = Camera(
 film = Film(
     width=300,
     height=300,
-    samples=64
+    samples=256
 )
 
 print("=" * 60)
